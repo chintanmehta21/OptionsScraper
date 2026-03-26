@@ -1,11 +1,8 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
-
-# DhanHQ API credentials
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+# DhanHQ API credentials (set via environment variables or GitHub Secrets)
+DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
+DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
 # NIFTY underlying security ID
 NIFTY_SECURITY_ID = 13
