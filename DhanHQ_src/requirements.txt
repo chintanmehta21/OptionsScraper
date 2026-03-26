@@ -2,4 +2,5 @@ dhanhq>=2.0.0
 pandas>=2.0.0
 scipy>=1.11.0
 requests>=2.31.0
+supabase>=2.0.0
 pytest>=7.4.0

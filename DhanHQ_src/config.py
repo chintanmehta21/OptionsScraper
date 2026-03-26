@@ -4,6 +4,10 @@ import os
 DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
 DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
+# Supabase credentials
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
 # NIFTY underlying security ID
 NIFTY_SECURITY_ID = 13
 
