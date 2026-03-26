@@ -19,9 +19,10 @@
 | `supabase/migrations/` | Create/Move | Postgres migration SQL files |
 | `supabase/seed.sql` | Create | Test seed data for local stack |
 | `DhanHQ_src/requirements.txt` | Update | Add psycopg2-binary |
-| `tests/conftest.py` | Update | Add Supabase fixtures (supa_service, supa_anon, pg_conn) |
-| `tests/test_supabase_schema.py` | Create | Pre-migration: schema, FK, RLS, views (20 tests) |
-| `tests/test_supabase_db.py` | Create | Post-migration: CRUD, upsert, queries, edge cases (25 tests) |
+| `tests/supabase/__init__.py` | Create | Package init |
+| `tests/supabase/conftest.py` | Create | Supabase fixtures (supa_service, supa_anon, pg_conn, seed_expiry) |
+| `tests/supabase/test_schema.py` | Create | Pre-migration: schema, FK, RLS, views (20 tests) |
+| `tests/supabase/test_db.py` | Create | Post-migration: CRUD, upsert, queries, edge cases (25 tests) |
 
 ---
 
