@@ -1,0 +1,6 @@
+.env
+data/*.db
+data/bhavcopy/
+__pycache__/
+*.pyc
+.pytest_cache/
