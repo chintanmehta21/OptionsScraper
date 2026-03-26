@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s https://dhanhq.co/docs/v2/)",
+      "Bash(curl -s https://api.dhan.co)",
+      "Bash(curl -s -L https://dhanhq.co/docs/v2/expired-options-data/)",
+      "Bash(curl -s -L https://dhanhq.co/docs/v2/historical-data/)",
+      "Bash(curl -s -L https://dhanhq.co/docs/v2/instruments/)",
+      "Bash(pip show:*)",
+      "WebFetch(domain:dhanhq.co)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
