@@ -97,17 +97,7 @@ OptionsScraper/
 
 ## Setup
 
-### Environment Variables
-
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `DHAN_CLIENT_ID` | Yes | DhanHQ numeric client ID |
-| `DHAN_PIN` | Yes (auto-auth) | 6-digit Dhan account PIN |
-| `DHAN_TOTP_SECRET` | Yes (auto-auth) | Base32 TOTP secret from DhanHQ setup |
-| `DHAN_ACCESS_TOKEN` | Fallback | DhanHQ JWT token (legacy fallback; auto-generated via TOTP when PIN + TOTP_SECRET are set) |
-| `SUPABASE_URL` | Production | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Production | Supabase service role key (full access) |
-| `SUPABASE_ANON_KEY` | Optional | Supabase anon key (read-only / RLS testing) |
+Configure required credentials via environment variables or GitHub Secrets — see `config.py` for the full list.
 
 ### Run
 
