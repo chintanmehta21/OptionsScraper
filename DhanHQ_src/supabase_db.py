@@ -44,7 +44,7 @@ class SupabaseDB:
         strikes_with_offsets: list of (strike_price, atm_offset) tuples.
         """
         rows = [
-            {"expiry_id": expiry_id, "strike": strike, "atm_offset": offset}
+            {"expiry_id": expiry_id, "strike": int(strike), "atm_offset": offset}
             for strike, offset in strikes_with_offsets
         ]
         resp = (
@@ -82,6 +82,8 @@ class SupabaseDB:
             ts = r["timestamp"]
             if "+" not in ts and "Z" not in ts:
                 ts = ts.replace(" ", "T") + "+05:30"
+            vol = r.get("volume")
+            oi = r.get("oi")
             candle_rows.append({
                 "strike_id": strike_id,
                 "option_type": r["option_type"],
@@ -90,8 +92,8 @@ class SupabaseDB:
                 "high": r.get("high"),
                 "low": r.get("low"),
                 "close": r.get("close"),
-                "volume": r.get("volume"),
-                "oi": r.get("oi"),
+                "volume": int(vol) if vol is not None else None,
+                "oi": int(oi) if oi is not None else None,
                 "iv": r.get("iv"),
                 "spot": r.get("spot"),
             })
@@ -130,6 +132,8 @@ class SupabaseDB:
         for r in rows:
             row = dict(r)
             row["expiry_id"] = self._expiry_id
+            if row.get("atm_strike") is not None:
+                row["atm_strike"] = int(row["atm_strike"])
             mapped.append(row)
         if mapped:
             self._batch_upsert("iv_history", mapped, "expiry_id,date")
