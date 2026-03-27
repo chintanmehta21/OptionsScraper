@@ -636,9 +636,10 @@ def run_eda(url=None, key=None, expiry_date=None, output_dir=None):
         return None
     expiry_id = resp.data[0]["id"]
 
-    today = datetime.now().strftime("%d%m%Y")
+    now = datetime.now()
+    timestamp = now.strftime("%d%m%Y_%H%M%S")
     if output_dir is None:
-        output_dir = os.path.join(PROJECT_ROOT, "docs", "logs", "supabase", f"eda_{today}")
+        output_dir = os.path.join(PROJECT_ROOT, "docs", "logs", "supabase", f"eda_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info("EDA for expiry %s (id=%d) -> %s", expiry, expiry_id, output_dir)
