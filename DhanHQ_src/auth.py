@@ -46,7 +46,10 @@ def generate_access_token(client_id: str, pin: str, totp_secret: str) -> str:
         logger.info("TOTP auth attempt %d/%d for client %s",
                      attempt, max_attempts, client_id)
         try:
-            resp = requests.post(AUTH_URL, json=payload, timeout=30)
+            resp = requests.post(AUTH_URL, params=payload, timeout=30)
+            if not resp.ok:
+                body = resp.text[:300] if resp.text else "(empty)"
+                logger.warning("Auth HTTP %d: %s", resp.status_code, body)
             resp.raise_for_status()
             data = resp.json()
 
