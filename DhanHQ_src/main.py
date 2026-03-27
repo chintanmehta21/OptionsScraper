@@ -219,11 +219,21 @@ def _run_expiry(db, dhan, config):
 
     # Output table (Supabase)
     output_count = 0
+    eda_dir = None
     if is_supa:
         output_rows = _build_output_rows(raw_rows, derived_rows, aggregate_rows, expiry_date)
         db.insert_output(output_rows)
         output_count = len(output_rows)
         logger.info("  Stored %d output rows", output_count)
+
+        # EDA immediately after output — runs per-expiry, not post-pipeline
+        try:
+            from tests.supabase.eda import run_eda
+            eda_dir = run_eda(expiry_date=expiry_date)
+            if eda_dir:
+                logger.info("  EDA report: %s", eda_dir)
+        except Exception as e:
+            logger.warning("  EDA failed (non-fatal): %s", e)
 
     return {
         "expiry_date": expiry_date,
@@ -233,6 +243,7 @@ def _run_expiry(db, dhan, config):
         "aggregate": len(aggregate_rows),
         "output": output_count,
         "verification": verification,
+        "eda_dir": eda_dir,
     }
 
 
@@ -270,23 +281,11 @@ def run_pipeline():
             logger.warning("  Expiry %s produced no data", config["expiry_date"])
         _endgroup()
 
-    # EDA
+    # EDA status (now runs per-expiry inside _run_expiry)
     eda_status = "skipped"
     if _use_supabase() and all_stats:
-        _group("EDA: Data quality checks")
-        t0 = time.time()
-        try:
-            from tests.supabase.eda import run_eda
-            for stats in all_stats:
-                eda_dir = run_eda(expiry_date=stats["expiry_date"])
-                if eda_dir:
-                    logger.info("  EDA report for %s: %s", stats["expiry_date"], eda_dir)
-            eda_status = "pass"
-        except Exception as e:
-            logger.warning("  EDA failed (non-fatal): %s", e)
-            eda_status = "fail"
-        step_times["EDA"] = time.time() - t0
-        _endgroup()
+        eda_dirs = [s.get("eda_dir") for s in all_stats if s.get("eda_dir")]
+        eda_status = "pass" if eda_dirs else "fail"
 
     # Done
     db.close()
