@@ -5,7 +5,7 @@ import requests as _requests
 from datetime import datetime, timezone, timedelta
 
 from DhanHQ_src.config import (
-    DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN,
+    DHAN_CLIENT_ID,
     NIFTY_SECURITY_ID, EXCHANGE_SEGMENT, INSTRUMENT_TYPE,
     EXPIRY_FLAG, REQUIRED_DATA, INTERVAL,
     STRIKES, OPTION_TYPES,
@@ -53,8 +53,11 @@ class DhanClient:
         return resp.json()
 
 
-def create_dhan_client():
-    return DhanClient(DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN)
+def create_dhan_client(token=None):
+    if token is None:
+        from DhanHQ_src.auth import get_access_token
+        token = get_access_token()
+    return DhanClient(DHAN_CLIENT_ID, token)
 
 
 def parse_api_response(response_data):
@@ -185,7 +188,7 @@ def fetch_all_options_data(dhan=None, from_date=None, to_date=None,
         logger.error(
             "ALL %d API calls returned 0 candles. "
             "Likely causes: "
-            "(1) DHAN_ACCESS_TOKEN expired (24h validity — regenerate at web.dhan.co), "
+            "(1) DHAN_DYNAMIC_ACCESS expired (24h validity — TOTP will auto-regenerate), "
             "(2) expiryCode=%d does not match the target expiry %s, "
             "(3) date range %s to %s has no traded data for this contract.",
             total_calls, expiry_code, _expiry, _from, _to,
