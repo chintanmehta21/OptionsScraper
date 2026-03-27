@@ -1,15 +1,8 @@
 import os
 from datetime import date as dt_date, timedelta
 
-from DhanHQ_src.auth import get_access_token
-
-# DhanHQ API credentials
+# DhanHQ API credentials (raw env vars only — auth happens at runtime)
 DHAN_CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
-try:
-    DHAN_ACCESS_TOKEN = get_access_token() if DHAN_CLIENT_ID else None
-except Exception:
-    # Fallback for test environments with dummy credentials
-    DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
 # Supabase credentials
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
