@@ -103,6 +103,27 @@ def build_raw_rows(parsed_rows, option_type, atm_offset, expiry_date):
     return parsed_rows
 
 
+def _unwrap_nested_response(response, option_type):
+    """Extract flat data from nested {"data": {"ce": {...}, "pe": {...}}} format.
+
+    DhanHQ rolling option API returns ce/pe nested objects.
+    Each inner object has parallel arrays: timestamp, open, high, low, close, etc.
+    """
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return response
+
+    key = "ce" if option_type in ("CALL", "CE") else "pe"
+    inner = data.get(key)
+    if isinstance(inner, dict) and inner:
+        return inner
+    # Try the other key as fallback
+    other = data.get("pe" if key == "ce" else "ce")
+    if isinstance(other, dict) and other:
+        return other
+    return response
+
+
 def fetch_with_retry(dhan, **kwargs):
     """Call expired_options_data with retry logic."""
     for attempt in range(MAX_RETRIES):
@@ -118,6 +139,14 @@ def fetch_with_retry(dhan, **kwargs):
                 return {}
             if "timestamp" in response:
                 return response
+            # Nested {"data": {"ce": {...}, "pe": {...}}} format
+            if "data" in response:
+                option_type = kwargs.get("drv_option_type", "CALL")
+                unwrapped = _unwrap_nested_response(response, option_type)
+                if "timestamp" in unwrapped:
+                    return unwrapped
+                logger.debug("Unwrapped but no timestamp: %s", list(unwrapped.keys())[:10])
+                return unwrapped
             # Unknown response shape — log for diagnostics
             logger.debug("API response keys: %s", list(response.keys()))
             return response

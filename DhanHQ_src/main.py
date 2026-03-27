@@ -304,6 +304,9 @@ def run_pipeline():
 
     _write_job_summary(all_stats, eda_status, step_times, total_time)
 
+    if not all_stats:
+        sys.exit(1)
+
 
 def _write_job_summary(all_stats, eda_status, step_times, total_time):
     """Write markdown summary to $GITHUB_STEP_SUMMARY."""
