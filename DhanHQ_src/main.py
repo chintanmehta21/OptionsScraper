@@ -12,6 +12,7 @@ from DhanHQ_src.config import (
     DB_PATH, EXPIRY_CONFIGS, SYMBOL,
     SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
 )
+from DhanHQ_src.auth import get_access_token
 from DhanHQ_src.fetcher import create_dhan_client, fetch_all_options_data, fetch_iv_baseline
 from DhanHQ_src.calculator import compute_derived_metrics, compute_aggregate_metrics
 from DhanHQ_src.verifier import verify_against_bhavcopy
@@ -248,7 +249,8 @@ def run_pipeline():
     _group("Setup: Database + API connection")
     t0 = time.time()
     db = _init_db()
-    dhan = create_dhan_client()
+    token = get_access_token()
+    dhan = create_dhan_client(token)
     step_times["Setup"] = time.time() - t0
     _endgroup()
 
