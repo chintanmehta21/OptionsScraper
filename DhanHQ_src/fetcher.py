@@ -139,9 +139,12 @@ def fetch_all_options_data(dhan=None):
     all_rows = []
     strike_offsets = {s: i - len(STRIKES) // 2 for i, s in enumerate(STRIKES)}
 
+    total_calls = len(STRIKES) * len(OPTION_TYPES)
+    call_num = 0
     for strike in STRIKES:
         for option_type in OPTION_TYPES:
-            logger.info("Fetching %s %s ...", strike, option_type)
+            call_num += 1
+            logger.info("[%d/%d] Fetching %s %s ...", call_num, total_calls, strike, option_type)
             response_data = fetch_with_retry(
                 dhan,
                 security_id=NIFTY_SECURITY_ID,
@@ -178,9 +181,14 @@ def fetch_iv_baseline(dhan=None):
     chunk_days = 30
     all_rows = []
 
+    total_chunks = ((end - start).days + chunk_days - 1) // chunk_days
+    chunk_num = 0
     current = start
     while current < end:
+        chunk_num += 1
         chunk_end = min(current + timedelta(days=chunk_days), end)
+        logger.info("[%d/%d] IV chunk %s to %s", chunk_num, total_chunks,
+                     current.isoformat(), chunk_end.isoformat())
         response_data = fetch_with_retry(
             dhan,
             security_id=NIFTY_SECURITY_ID,
