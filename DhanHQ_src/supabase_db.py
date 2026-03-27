@@ -213,10 +213,11 @@ class SupabaseDB:
         return resp.data
 
     def get_distinct_dates(self):
-        """Get distinct dates from raw_candles."""
+        """Get distinct dates from aggregate_metrics (small table, no full scan)."""
         resp = (
-            self.client.table("raw_candles")
+            self.client.table("aggregate_metrics")
             .select("timestamp")
+            .eq("expiry_id", self._expiry_id)
             .order("timestamp")
             .execute()
         )

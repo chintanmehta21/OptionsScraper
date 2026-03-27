@@ -117,11 +117,9 @@ def _unwrap_nested_response(response, option_type):
     inner = data.get(key)
     if isinstance(inner, dict) and inner:
         return inner
-    # Try the other key as fallback
-    other = data.get("pe" if key == "ce" else "ce")
-    if isinstance(other, dict) and other:
-        return other
-    return response
+    # Requested option type not in response — return empty, don't use wrong type
+    logger.debug("No %s data in nested response (keys: %s)", key, list(data.keys()))
+    return {}
 
 
 def fetch_with_retry(dhan, **kwargs):

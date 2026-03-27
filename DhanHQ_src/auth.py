@@ -46,6 +46,7 @@ def generate_access_token(client_id: str, pin: str, totp_secret: str) -> str:
         logger.info("TOTP auth attempt %d/%d for client %s",
                      attempt, max_attempts, client_id)
         try:
+            # DhanHQ auth requires query params (not JSON body) — returns 400 with json=
             resp = requests.post(AUTH_URL, params=payload, timeout=30)
             if not resp.ok:
                 body = resp.text[:300] if resp.text else "(empty)"

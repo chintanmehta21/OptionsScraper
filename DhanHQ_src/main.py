@@ -185,25 +185,32 @@ def _run_expiry(db, dhan, config):
     prev_spot_close = None
     aggregate_rows = []
     prev_fair_price = None
+    last_date = None
+    last_spot = None
+
+    # Index raw_rows by timestamp for O(1) spot lookup
+    spot_by_ts = {}
+    for r in raw_rows:
+        if r["timestamp"] not in spot_by_ts:
+            spot_by_ts[r["timestamp"]] = r["spot"]
 
     for ts in sorted(by_timestamp.keys()):
         ts_rows = by_timestamp[ts]
-        spot = raw_rows[0]["spot"]
-        for r in raw_rows:
-            if r["timestamp"] == ts:
-                spot = r["spot"]
-                break
+        spot = spot_by_ts.get(ts, raw_rows[0]["spot"])
 
-        agg = compute_aggregate_metrics(ts_rows, spot, prev_spot_close, iv_values, expiry_date)
+        current_date = ts[:10]
+        if last_date is not None and current_date != last_date:
+            prev_spot_close = last_spot
+        last_date = current_date
+        last_spot = spot
+
+        agg = compute_aggregate_metrics(ts_rows, spot, prev_spot_close, iv_values, expiry_date,
+                                         lot_size=lot_size)
 
         if prev_fair_price is not None:
             agg["fair_price_chg"] = round(agg["fair_price"] - prev_fair_price, 2)
         prev_fair_price = agg["fair_price"]
         aggregate_rows.append(agg)
-
-        current_date = ts[:10]
-        if aggregate_rows and aggregate_rows[-1]["timestamp"][:10] != current_date:
-            prev_spot_close = spot
 
     db.insert_aggregate_metrics(aggregate_rows)
     logger.info("  Stored %d aggregate rows", len(aggregate_rows))

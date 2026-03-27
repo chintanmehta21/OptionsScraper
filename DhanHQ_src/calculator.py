@@ -180,7 +180,8 @@ def compute_fair_price(spot, strike, days_to_expiry, iv, risk_free_rate=RISK_FRE
     return round(price, 2)
 
 
-def compute_aggregate_metrics(derived_rows, spot, prev_spot_close, iv_history, expiry_date_str):
+def compute_aggregate_metrics(derived_rows, spot, prev_spot_close, iv_history, expiry_date_str,
+                               lot_size=None):
     """Compute aggregate metrics for a single timestamp.
 
     Args:
@@ -264,7 +265,7 @@ def compute_aggregate_metrics(derived_rows, spot, prev_spot_close, iv_history, e
         "ivp": ivp,
         "max_pain": max_pain,
         "overall_pcr": round(overall_pcr, 4),
-        "lot_size": LOT_SIZE,
+        "lot_size": lot_size if lot_size is not None else LOT_SIZE,
         "total_ce_oi": total_ce_oi,
         "total_pe_oi": total_pe_oi,
         "total_oi_net": total_pe_oi - total_ce_oi,
