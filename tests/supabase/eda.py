@@ -65,7 +65,7 @@ def _expected_trading_days(from_date, to_date):
 
 
 def _sid_filter(strike_ids):
-    return f"({','.join(str(s) for s in strike_ids)})"
+    return ",".join(str(s) for s in strike_ids)
 
 
 def _q1_q3(values):
