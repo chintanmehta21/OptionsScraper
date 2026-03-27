@@ -16,10 +16,7 @@ from DhanHQ_src.config import (
 
 logger = logging.getLogger(__name__)
 
-# IST offset
 IST = timezone(timedelta(hours=5, minutes=30))
-
-# DhanHQ Rolling Option API endpoint (for expired options data)
 ROLLING_OPTION_URL = "https://api.dhan.co/v2/charts/rollingoption"
 
 
@@ -70,7 +67,6 @@ def parse_api_response(response_data):
     rows = []
 
     for i in range(count):
-        # Convert epoch to IST datetime
         dt = datetime.fromtimestamp(timestamps[i], tz=IST)
         rows.append({
             "timestamp": dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -110,16 +106,17 @@ def fetch_with_retry(dhan, **kwargs):
         try:
             response = dhan.expired_options_data(**kwargs)
             if not isinstance(response, dict):
+                logger.warning("Non-dict API response: %s", type(response))
                 return {}
-            # REST API may return data directly or wrapped in status/data
             if "status" in response:
                 if response["status"] == "success":
                     return response.get("data", {})
-                logger.error("API error: %s (params: %s)", response, kwargs)
+                logger.error("API error response: %s", str(response)[:500])
                 return {}
-            # Direct response (has timestamp, open, close, etc.)
             if "timestamp" in response:
                 return response
+            # Unknown response shape — log for diagnostics
+            logger.debug("API response keys: %s", list(response.keys()))
             return response
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
@@ -127,74 +124,116 @@ def fetch_with_retry(dhan, **kwargs):
                 logger.warning("Retry %d/%d after %.1fs: %s", attempt + 1, MAX_RETRIES, wait, e)
                 time.sleep(wait)
             else:
-                logger.error("All retries failed for %s: %s", kwargs, e)
+                logger.error("All retries failed for %s: %s", kwargs.get("strike", "?"), e)
                 raise
 
 
-def fetch_all_options_data(dhan=None):
-    """Fetch 1-min data for all strikes x option types. Returns list of row dicts."""
+def fetch_all_options_data(dhan=None, from_date=None, to_date=None,
+                           expiry_date=None, expiry_flag=None, expiry_code=1):
+    """Fetch 1-min data for all strikes x option types.
+
+    All params fall back to config.py globals when None.
+    """
     if dhan is None:
         dhan = create_dhan_client()
 
+    _from = from_date or FROM_DATE
+    _to = to_date or TO_DATE
+    _expiry = expiry_date or EXPIRY_DATE
+    _flag = expiry_flag or EXPIRY_FLAG
+
     all_rows = []
     strike_offsets = {s: i - len(STRIKES) // 2 for i, s in enumerate(STRIKES)}
-
     total_calls = len(STRIKES) * len(OPTION_TYPES)
     call_num = 0
+    empty_count = 0
+
     for strike in STRIKES:
         for option_type in OPTION_TYPES:
             call_num += 1
-            logger.info("[%d/%d] Fetching %s %s ...", call_num, total_calls, strike, option_type)
+            if call_num == 1 or call_num % 6 == 0 or call_num == total_calls:
+                logger.info("  Progress: %d/%d API calls ...", call_num, total_calls)
+            logger.debug("[%d/%d] Fetching %s %s ...", call_num, total_calls, strike, option_type)
             response_data = fetch_with_retry(
                 dhan,
                 security_id=NIFTY_SECURITY_ID,
                 exchange_segment=EXCHANGE_SEGMENT,
                 instrument_type=INSTRUMENT_TYPE,
-                expiry_flag=EXPIRY_FLAG,
-                expiry_code=1,
+                expiry_flag=_flag,
+                expiry_code=expiry_code,
                 strike=strike,
                 drv_option_type=option_type,
                 required_data=REQUIRED_DATA,
-                from_date=FROM_DATE,
-                to_date=TO_DATE,
+                from_date=_from,
+                to_date=_to,
             )
             parsed = parse_api_response(response_data)
-            rows = build_raw_rows(parsed, option_type, strike_offsets[strike], EXPIRY_DATE)
+            if not parsed:
+                empty_count += 1
+                if isinstance(response_data, dict):
+                    logger.warning("  0 candles. keys=%s body=%s",
+                                   list(response_data.keys()), str(response_data)[:200])
+                else:
+                    logger.warning("  0 candles. type=%s", type(response_data))
+
+            rows = build_raw_rows(parsed, option_type, strike_offsets[strike], _expiry)
             all_rows.extend(rows)
-            logger.info("  Got %d candles for %s %s", len(parsed), strike, option_type)
+            logger.debug("  Got %d candles for %s %s", len(parsed), strike, option_type)
             time.sleep(API_DELAY_SECONDS)
 
-    logger.info("Total raw rows fetched: %d", len(all_rows))
+    if empty_count == total_calls:
+        logger.error(
+            "ALL %d API calls returned 0 candles. "
+            "Likely causes: "
+            "(1) DHAN_ACCESS_TOKEN expired (24h validity — regenerate at web.dhan.co), "
+            "(2) expiryCode=%d does not match the target expiry %s, "
+            "(3) date range %s to %s has no traded data for this contract.",
+            total_calls, expiry_code, _expiry, _from, _to,
+        )
+    elif empty_count > 0:
+        logger.warning("%d/%d API calls returned 0 candles", empty_count, total_calls)
+
+    logger.info("Fetched %d strikes x %d types: %d candles (%d empty calls)",
+                 len(STRIKES), len(OPTION_TYPES), len(all_rows), empty_count)
     return all_rows
 
 
-def fetch_iv_baseline(dhan=None):
-    """Fetch daily ATM IV for past 52 weeks for IVR/IVP calculation."""
+def fetch_iv_baseline(dhan=None, baseline_from=None, baseline_to=None, expiry_flag=None):
+    """Fetch daily ATM IV for IVR/IVP calculation.
+
+    All params fall back to config.py globals when None.
+    """
     if dhan is None:
         dhan = create_dhan_client()
 
-    logger.info("Fetching 52-week IV baseline (ATM CALL daily) ...")
+    _from = baseline_from or IV_BASELINE_FROM
+    _to = baseline_to or IV_BASELINE_TO
+    _flag = expiry_flag or EXPIRY_FLAG
+
+    logger.info("Fetching IV baseline (ATM CALL daily) %s to %s ...", _from, _to)
 
     from datetime import date as dt_date
-    start = dt_date.fromisoformat(IV_BASELINE_FROM)
-    end = dt_date.fromisoformat(IV_BASELINE_TO)
+    start = dt_date.fromisoformat(_from)
+    end = dt_date.fromisoformat(_to)
     chunk_days = 30
     all_rows = []
 
-    total_chunks = ((end - start).days + chunk_days - 1) // chunk_days
+    total_chunks = max(1, ((end - start).days + chunk_days - 1) // chunk_days)
     chunk_num = 0
     current = start
     while current < end:
         chunk_num += 1
         chunk_end = min(current + timedelta(days=chunk_days), end)
-        logger.info("[%d/%d] IV chunk %s to %s", chunk_num, total_chunks,
-                     current.isoformat(), chunk_end.isoformat())
+        if chunk_num == 1 or chunk_num % 4 == 0 or chunk_num == total_chunks:
+            logger.info("  IV progress: %d/%d chunks ...", chunk_num, total_chunks)
+        logger.debug("[%d/%d] IV chunk %s to %s", chunk_num, total_chunks,
+                      current.isoformat(), chunk_end.isoformat())
         response_data = fetch_with_retry(
             dhan,
             security_id=NIFTY_SECURITY_ID,
             exchange_segment=EXCHANGE_SEGMENT,
             instrument_type=INSTRUMENT_TYPE,
-            expiry_flag=EXPIRY_FLAG,
+            expiry_flag=_flag,
             expiry_code=1,
             strike="ATM",
             drv_option_type="CALL",
@@ -214,9 +253,9 @@ def fetch_iv_baseline(dhan=None):
                     "atm_strike": response_data["strike"][i] if "strike" in response_data else None,
                 })
 
-        logger.info("  IV baseline chunk %s to %s: %d rows",
-                     current.isoformat(), chunk_end.isoformat(),
-                     len(response_data.get("timestamp", [])) if response_data else 0)
+        logger.debug("  IV chunk %s to %s: %d rows",
+                      current.isoformat(), chunk_end.isoformat(),
+                      len(response_data.get("timestamp", [])) if response_data else 0)
         current = chunk_end
         time.sleep(API_DELAY_SECONDS)
 

@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dependencies
 pip install -r DhanHQ_src/requirements.txt
 
-# Run full pipeline (requires DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN env vars)
+# Run full pipeline (requires DHAN_CLIENT_ID + TOTP creds or DHAN_ACCESS_TOKEN)
 python -m DhanHQ_src.main
 
 # Run all tests
@@ -30,13 +30,16 @@ python -m pytest tests/supabase/ -v
 
 # Run only non-Supabase tests (no external deps needed)
 python -m pytest tests/ -v --ignore=tests/supabase
+
+# Run EDA report (requires Supabase creds; outputs to docs/logs/supabase/eda_*/report.html)
+python -m tests.supabase.eda
 ```
 
 ## Architecture
 
 NIFTY options scraper: fetches 1-min expired options data from DhanHQ, stores in Supabase (Postgres), computes metrics, verifies against NSE Bhavcopy. Falls back to SQLite only when Supabase env vars are missing.
 
-**Pipeline flow:** `fetcher.py` → `supabase_db.py` → `calculator.py` → `verifier.py`, orchestrated by `main.py`.
+**Pipeline flow:** `fetcher.py` → `supabase_db.py` → `calculator.py` → `verifier.py` → denormalized output → EDA, orchestrated by `main.py`. Steps 8-9 (output table, EDA report) are Supabase-only.
 
 **Database backend selection:** `main.py` checks for `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`. If both are set, it uses `SupabaseDB` (`supabase_db.py`). Otherwise it falls back to SQLite `Database` (`db.py`). Supabase is the primary/production backend.
 
@@ -58,12 +61,16 @@ NIFTY options scraper: fetches 1-min expired options data from DhanHQ, stores in
 
 - **`build_raw_rows()` handles both CALL/PUT and CE/PE.** The API uses `"CALL"`/`"PUT"`, the DB uses `"CE"`/`"PE"`. Passing `"CE"` directly also works (passthrough). Don't "fix" this to only accept one format.
 
+- **Supabase tests need a local stack.** `tests/supabase/` requires `npx supabase start` running locally. The conftest uses `npx supabase db reset` to apply migrations before each session. Set `SUPABASE_TEST_ANON_KEY` and `SUPABASE_TEST_SERVICE_ROLE_KEY` (from `supabase start` output) or tests are skipped.
+
 ### Environment variables
 
 | Variable | Purpose |
 |----------|---------|
 | `DHAN_CLIENT_ID` | DhanHQ numeric client ID |
-| `DHAN_ACCESS_TOKEN` | DhanHQ JWT token (expires every 24h) |
+| `DHAN_PIN` | 6-digit Dhan account PIN (for TOTP auth) |
+| `DHAN_TOTP_SECRET` | Base32 TOTP secret from DhanHQ setup (for auto token generation) |
+| `DHAN_ACCESS_TOKEN` | DhanHQ JWT token — legacy fallback; auto-generated via TOTP when `DHAN_PIN` + `DHAN_TOTP_SECRET` are set |
 | `SUPABASE_URL` | Supabase project URL (required for production) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (required for production) |
 | `SUPABASE_ANON_KEY` | Supabase anon key (for read-only/RLS testing) |

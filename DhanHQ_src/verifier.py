@@ -110,12 +110,13 @@ def compare_values(dhan_data, nse_data, close_tolerance=0.05):
     }
 
 
-def verify_against_bhavcopy(db, dates=None):
+def verify_against_bhavcopy(db, dates=None, expiry_date=None):
     """Run full verification for all dates."""
     if dates is None:
         dates = db.get_distinct_dates()
 
-    expiry_formatted = datetime.strptime(EXPIRY_DATE, "%Y-%m-%d").strftime("%d-%b-%Y")
+    _expiry = expiry_date or EXPIRY_DATE
+    expiry_formatted = datetime.strptime(_expiry, "%Y-%m-%d").strftime("%d-%b-%Y")
     total_checks = 0
     total_matches = 0
     verification_rows = []
