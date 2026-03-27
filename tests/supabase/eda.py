@@ -28,6 +28,15 @@ NUMERIC_FIELDS = ["open", "high", "low", "close", "volume", "oi", "iv", "spot"]
 EXPECTED_STRIKES = len(STRIKES)  # 9
 OPTION_TYPES = ["CE", "PE"]
 
+# NSE holidays FY 2025-26 (source: NSE circular)
+NSE_HOLIDAYS = {
+    "2025-04-10", "2025-04-14", "2025-04-18", "2025-05-01", "2025-07-17",
+    "2025-08-15", "2025-08-27", "2025-10-02", "2025-10-20", "2025-10-21",
+    "2025-10-22", "2025-11-05", "2025-11-26", "2025-12-25",
+    "2026-01-26", "2026-02-19", "2026-03-10", "2026-03-26",
+    "2026-03-31", "2026-04-02", "2026-04-03", "2026-04-14",
+}
+
 
 # ── Helpers ────────────────────────────────────────────────────
 
@@ -52,13 +61,13 @@ def _fetch_all(client, table, select="*", filters=None, order="timestamp"):
 
 
 def _expected_trading_days(from_date, to_date):
-    """Generate weekday dates in [from_date, to_date) — approximates trading days."""
+    """Generate weekday dates in [from_date, to_date) excluding NSE holidays."""
     start = dt_date.fromisoformat(from_date)
     end = dt_date.fromisoformat(to_date)
     days = []
     d = start
     while d < end:
-        if d.weekday() < 5:  # Mon-Fri
+        if d.weekday() < 5 and d.isoformat() not in NSE_HOLIDAYS:
             days.append(d.isoformat())
         d += timedelta(days=1)
     return days
@@ -108,65 +117,63 @@ def _load_data(client, expiry_id):
 # ── Checks ─────────────────────────────────────────────────────
 
 def check_completeness(strikes, candles, from_date, to_date, expiry_date):
-    """Thorough completeness: expected trading days x strikes x CE/PE.
+    """ATM-relative completeness: check per-day strike count and candle totals.
 
-    Returns dict with per-combo candle counts, missing combos, heatmap data.
+    Instead of cross-joining all strikes x all days (which produces false warnings
+    due to ATM drift), check each day independently: expect ~9 strikes and ~6750 candles.
     """
     expected_days = _expected_trading_days(from_date, to_date)
-    strike_map = {s["id"]: s for s in strikes}
-    strike_labels = sorted(set(s["strike"] for s in strikes))
+    # Filter out future dates (expiry not yet traded)
+    today = dt_date.today().isoformat()
+    expected_days = [d for d in expected_days if d <= today]
 
-    # Count candles per (strike, option_type, date)
-    counts = defaultdict(int)
+    strike_map = {s["id"]: s for s in strikes}
+
+    # Count candles per date and track strikes per date
+    day_candles = defaultdict(int)
+    day_strikes = defaultdict(set)
     actual_dates = set()
     for c in candles:
         d = c["timestamp"][:10]
         actual_dates.add(d)
+        day_candles[d] += 1
         sid = c["strike_id"]
         s_info = strike_map.get(sid)
         if s_info:
-            counts[(s_info["strike"], c["option_type"], d)] += 1
+            day_strikes[d].add(s_info["strike"])
 
-    # Dates present in data but not in expected (e.g. holidays that had no trading)
-    extra_dates = sorted(actual_dates - set(expected_days))
-    # Expected dates with no data at all
+    # Holidays that fall in the expected range
+    holidays_in_range = [d for d in sorted(NSE_HOLIDAYS)
+                         if from_date <= d < to_date and dt_date.fromisoformat(d).weekday() < 5]
+
+    # Missing dates (not holidays, not future)
     missing_dates = sorted(set(expected_days) - actual_dates)
-    # Use actual trading days (intersection) for the heatmap
-    trading_days = sorted(actual_dates & set(expected_days))
-    # Also include any actual dates not in expected (data exists)
     all_data_dates = sorted(actual_dates)
 
-    # Build heatmap: rows=strikes, cols=dates, cells=candle count
-    heatmap = {}  # (strike, option_type) -> {date: count}
-    missing_combos = []
-    for strike in strike_labels:
-        for ot in OPTION_TYPES:
-            row = {}
-            for d in all_data_dates:
-                cnt = counts.get((strike, ot, d), 0)
-                row[d] = cnt
-                if cnt == 0 and d in set(expected_days):
-                    missing_combos.append({"strike": strike, "type": ot, "date": d})
-            heatmap[(strike, ot)] = row
-
-    # Per-day total candle stats
-    day_totals = {}
+    # Per-day summary
+    day_summary = []
+    low_days = []
     for d in all_data_dates:
-        total = sum(counts.get((s, ot, d), 0) for s in strike_labels for ot in OPTION_TYPES)
-        day_totals[d] = total
+        n_strikes = len(day_strikes[d])
+        n_candles = day_candles[d]
+        ok = n_strikes >= 9 and n_candles >= 6000
+        day_summary.append({
+            "date": d, "strikes": n_strikes, "candles": n_candles,
+            "atm_approx": sorted(day_strikes[d])[len(day_strikes[d])//2] if day_strikes[d] else None,
+            "status": "OK" if ok else "LOW",
+        })
+        if not ok:
+            low_days.append(d)
 
     return {
         "expected_days": expected_days,
         "actual_days": all_data_dates,
         "missing_dates": missing_dates,
-        "extra_dates": extra_dates,
-        "expected_combos": len(strike_labels) * len(OPTION_TYPES) * len(expected_days),
-        "populated_combos": sum(1 for v in counts.values() if v > 0),
-        "missing_combos": missing_combos,
-        "heatmap": heatmap,
-        "day_totals": day_totals,
-        "strike_labels": strike_labels,
+        "holidays_in_range": holidays_in_range,
+        "day_summary": day_summary,
+        "low_days": low_days,
         "total_candles": len(candles),
+        "strike_labels": sorted(set(s["strike"] for s in strikes)),
     }
 
 
@@ -231,7 +238,9 @@ def check_time_gaps(strikes, candles):
                     "after": ts[i - 1], "before": ts[i], "gap_min": gap,
                 })
 
-    return {"groups": len(groups), "gaps": gaps, "candles_per_group": candles_per_group}
+    avg_gaps = len(gaps) / max(len(groups), 1)
+    return {"groups": len(groups), "gaps": gaps, "candles_per_group": candles_per_group,
+            "avg_gaps_per_group": round(avg_gaps, 1), "warn": avg_gaps > 10}
 
 
 def check_outliers(candles):
@@ -245,7 +254,8 @@ def check_outliers(candles):
         iqr = q3 - q1
         if iqr == 0:
             continue
-        lo, hi = q1 - 3 * iqr, q3 + 3 * iqr
+        multiplier = 5 if field in ("volume", "oi") else 3
+        lo, hi = q1 - multiplier * iqr, q3 + multiplier * iqr
         outliers = [v for v in vals if v < lo or v > hi]
         result[field] = {
             "n": len(vals), "q1": round(q1, 2), "q3": round(q3, 2),
@@ -284,7 +294,6 @@ def _make_charts(completeness, nulls, outliers, time_gaps, candles, strikes):
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.colors as mcolors
     except ImportError:
         logger.warning("matplotlib not installed, skipping charts")
         return {}
@@ -303,46 +312,7 @@ def _make_charts(completeness, nulls, outliers, time_gaps, candles, strikes):
         "axes.labelcolor": text_col, "font.size": 9,
     })
 
-    # 1. Completeness heatmap
-    hm = completeness["heatmap"]
-    strike_labels = completeness["strike_labels"]
-    dates = completeness["actual_days"]
-    if strike_labels and dates:
-        row_labels = []
-        data_matrix = []
-        for strike in strike_labels:
-            for ot in OPTION_TYPES:
-                row_labels.append(f"{strike} {ot}")
-                row = [hm.get((strike, ot), {}).get(d, 0) for d in dates]
-                data_matrix.append(row)
-
-        fig, ax = plt.subplots(figsize=(max(8, len(dates) * 0.6), max(4, len(row_labels) * 0.3)))
-        cmap = mcolors.LinearSegmentedColormap.from_list("rg", [warn_col, "#fab387", ok_col])
-        max_val = max(max(r) for r in data_matrix) if data_matrix and any(data_matrix) else 1
-        im = ax.imshow(data_matrix, aspect="auto", cmap=cmap, vmin=0, vmax=max(max_val, 1))
-        ax.set_xticks(range(len(dates)))
-        ax.set_xticklabels([d[5:] for d in dates], rotation=45, ha="right", fontsize=7)
-        ax.set_yticks(range(len(row_labels)))
-        ax.set_yticklabels(row_labels, fontsize=7)
-        ax.set_title("Candle Count per Strike/Type/Date", fontsize=11, pad=10)
-        fig.colorbar(im, ax=ax, shrink=0.6, label="candles")
-        charts["completeness_heatmap"] = _fig_to_base64(fig)
-
-    # 2. Candles per day bar chart
-    day_totals = completeness["day_totals"]
-    if day_totals:
-        fig, ax = plt.subplots(figsize=(max(6, len(day_totals) * 0.5), 3.5))
-        days = list(day_totals.keys())
-        vals = [day_totals[d] for d in days]
-        colors = [ok_col if v > 0 else warn_col for v in vals]
-        ax.bar(range(len(days)), vals, color=colors, edgecolor="#585b70", linewidth=0.5)
-        ax.set_xticks(range(len(days)))
-        ax.set_xticklabels([d[5:] for d in days], rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel("Total candles")
-        ax.set_title("Candles per Trading Day", fontsize=11, pad=10)
-        charts["candles_per_day"] = _fig_to_base64(fig)
-
-    # 3. Null counts bar
+    # 1. Null counts bar
     nc = nulls["null_counts"]
     fields_with_nulls = {k: v for k, v in nc.items() if v > 0}
     if fields_with_nulls:
@@ -353,7 +323,7 @@ def _make_charts(completeness, nulls, outliers, time_gaps, candles, strikes):
         ax.set_title("Null Values by Field", fontsize=11, pad=10)
         charts["null_counts"] = _fig_to_base64(fig)
 
-    # 4. Outlier % bar
+    # 2. Outlier % bar
     if outliers:
         fields = [f for f in outliers if outliers[f]["outlier_count"] > 0]
         if fields:
@@ -364,7 +334,7 @@ def _make_charts(completeness, nulls, outliers, time_gaps, candles, strikes):
             ax.set_title("Outliers by Field (3x IQR)", fontsize=11, pad=10)
             charts["outlier_pct"] = _fig_to_base64(fig)
 
-    # 5. Gap distribution histogram
+    # 3. Gap distribution histogram
     gaps = time_gaps["gaps"]
     if gaps:
         gap_mins = [g["gap_min"] for g in gaps]
@@ -375,7 +345,7 @@ def _make_charts(completeness, nulls, outliers, time_gaps, candles, strikes):
         ax.set_title("Time Gap Distribution", fontsize=11, pad=10)
         charts["gap_histogram"] = _fig_to_base64(fig)
 
-    # 6. Candles-per-group distribution
+    # 4. Candles-per-group distribution
     cpg = time_gaps["candles_per_group"]
     if cpg:
         fig, ax = plt.subplots(figsize=(5, 3))
@@ -440,9 +410,9 @@ def build_html(completeness, nulls, ohlc, time_gaps, outliers, distributions, ch
     verdicts = {}
 
     # Completeness verdict
-    mc = len(completeness["missing_combos"])
     md = len(completeness["missing_dates"])
-    if mc > 0 or md > 0:
+    low = len(completeness["low_days"])
+    if md > 0 or low > 0:
         verdicts["completeness"] = "warn"
         fails += 1
     else:
@@ -465,7 +435,7 @@ def build_html(completeness, nulls, ohlc, time_gaps, outliers, distributions, ch
         verdicts["ohlc"] = "ok"
 
     # Time gaps
-    if time_gaps["gaps"]:
+    if time_gaps.get("warn", False):
         verdicts["gaps"] = "warn"
         fails += 1
     else:
@@ -505,7 +475,7 @@ def build_html(completeness, nulls, ohlc, time_gaps, outliers, distributions, ch
 """)
     check_details = [
         ("Data Completeness", verdicts["completeness"],
-         f"{mc} missing combos, {md} missing dates" if verdicts["completeness"] == "warn" else "All strike/type/date combos present"),
+         f"{md} missing dates, {low} low-coverage days" if verdicts["completeness"] == "warn" else f"{len(completeness['actual_days'])} days, all with 9+ strikes"),
         ("Null Values", verdicts["nulls"],
          f"{total_nulls} nulls ({critical_nulls} in OHLC)" if total_nulls > 0 else "No nulls"),
         ("OHLC Integrity", verdicts["ohlc"],
@@ -525,31 +495,26 @@ def build_html(completeness, nulls, ohlc, time_gaps, outliers, distributions, ch
     parts.append("<h2>2. Data Completeness</h2><div class='card'>")
     parts.append(f"""<p>Expected date range: <b>{completeness['expected_days'][0] if completeness['expected_days'] else '?'}</b> to
 <b>{completeness['expected_days'][-1] if completeness['expected_days'] else '?'}</b>
-({len(completeness['expected_days'])} weekdays) |
-Actual data on <b>{len(completeness['actual_days'])}</b> days |
-{EXPECTED_STRIKES} strikes x 2 types = {EXPECTED_STRIKES * 2} combos/day</p>""")
+({len(completeness['expected_days'])} trading days, holidays excluded) |
+Actual data on <b>{len(completeness['actual_days'])}</b> days</p>""")
+
+    if completeness["holidays_in_range"]:
+        parts.append(f'<p class="info">NSE holidays in range: {", ".join(completeness["holidays_in_range"])}</p>')
 
     if completeness["missing_dates"]:
-        parts.append(f'<p class="missing">Missing dates (no data at all): {", ".join(completeness["missing_dates"])}</p>')
+        parts.append(f'<p class="missing">Missing dates (not holidays, not future): {", ".join(completeness["missing_dates"])}</p>')
     else:
         parts.append('<p class="good">All expected trading days have data.</p>')
 
-    if charts.get("completeness_heatmap"):
-        parts.append(f'<div class="chart-container"><img src="{charts["completeness_heatmap"]}" alt="Completeness heatmap"></div>')
+    # Strike Coverage table
+    if completeness["day_summary"]:
+        parts.append("<h3>Strike Coverage per Day</h3>")
+        sc_rows = [[d["date"], d["strikes"], f"{d['candles']:,}",
+                     d["atm_approx"] if d["atm_approx"] else "-",
+                     f'<span class="{"good" if d["status"] == "OK" else "missing"}">{d["status"]}</span>']
+                    for d in completeness["day_summary"]]
+        parts.append(_html_table(["Date", "Strikes", "Candles", "ATM~Strike", "Status"], sc_rows))
 
-    if charts.get("candles_per_day"):
-        parts.append(f'<div class="chart-container"><img src="{charts["candles_per_day"]}" alt="Candles per day"></div>')
-
-    # Day totals table
-    if completeness["day_totals"]:
-        rows = [[d, f"{v:,}"] for d, v in completeness["day_totals"].items()]
-        parts.append("<h3>Candles per Day</h3>")
-        parts.append(_html_table(["Date", "Total Candles"], rows))
-
-    if completeness["missing_combos"]:
-        parts.append(f"<h3>Missing Combos ({len(completeness['missing_combos'])})</h3>")
-        mc_rows = [[m["strike"], m["type"], m["date"]] for m in completeness["missing_combos"]]
-        parts.append(_html_table(["Strike", "Type", "Date"], mc_rows))
     parts.append("</div>")
 
     # ── 3. Null Analysis ──────────────────────────────────
@@ -621,6 +586,38 @@ Actual data on <b>{len(completeness['actual_days'])}</b> days |
     return "\n".join(parts)
 
 
+def check_health(completeness, nulls, ohlc, outliers, time_gaps):
+    """Return overall health verdict: HEALTHY / DEGRADED / BROKEN."""
+    reasons = []
+
+    if completeness["total_candles"] == 0:
+        return "BROKEN", ["No candle data at all"]
+
+    critical_nulls = sum(nulls["null_counts"].get(f, 0) for f in ["open", "high", "low", "close"])
+    if critical_nulls > 0:
+        reasons.append(f"{critical_nulls} nulls in OHLC fields")
+
+    total = ohlc["checked"]
+    if total > 0 and len(ohlc.get("violations", [])) / total > 0.01:
+        reasons.append(f"OHLC violations > 1%")
+
+    if reasons:
+        return "BROKEN", reasons
+
+    for d in completeness.get("day_summary", []):
+        if d["candles"] < 6000:
+            reasons.append(f"{d['date']}: only {d['candles']} candles")
+
+    for field in ("volume", "oi"):
+        if field in outliers and outliers[field].get("pct", 0) > 20:
+            reasons.append(f"{field} outliers > 20%")
+
+    if reasons:
+        return "DEGRADED", reasons
+
+    return "HEALTHY", []
+
+
 # ── Entry point ────────────────────────────────────────────────
 
 def run_eda(url=None, key=None, expiry_date=None, output_dir=None):
@@ -671,26 +668,37 @@ def run_eda(url=None, key=None, expiry_date=None, output_dir=None):
 
     # Also dump raw JSON for programmatic use
     raw = {
-        "completeness": {k: v for k, v in completeness.items() if k != "heatmap"},
+        "completeness": completeness,
         "nulls": nulls,
         "ohlc": {"checked": ohlc["checked"], "violation_count": len(ohlc["violations"])},
-        "time_gaps": {"groups": time_gaps_result["groups"], "gap_count": len(time_gaps_result["gaps"])},
+        "time_gaps": {"groups": time_gaps_result["groups"], "gap_count": len(time_gaps_result["gaps"]),
+                      "avg_gaps_per_group": time_gaps_result.get("avg_gaps_per_group", 0)},
         "outliers": outliers,
         "distributions": distributions,
     }
     with open(os.path.join(output_dir, "raw_data.json"), "w") as f:
         json.dump(raw, f, indent=2, default=str)
 
+    # Health check
+    health, health_reasons = check_health(completeness, nulls, ohlc, outliers, time_gaps_result)
+    logger.info("EDA HEALTH: %s | %d candles, %d days, %d nulls",
+                health, completeness["total_candles"],
+                len(completeness["actual_days"]),
+                sum(nulls["null_counts"].values()))
+    if health_reasons:
+        for reason in health_reasons:
+            logger.info("  - %s", reason)
+
     # Print summary
     fails = sum(1 for v in [
-        len(completeness["missing_combos"]) > 0 or len(completeness["missing_dates"]) > 0,
+        len(completeness["missing_dates"]) > 0 or len(completeness["low_days"]) > 0,
         sum(nulls["null_counts"].get(f, 0) for f in ["open", "high", "low", "close"]) > 0,
         len(ohlc["violations"]) > 0,
-        len(time_gaps_result["gaps"]) > 0,
+        time_gaps_result.get("warn", False),
         any(outliers[f]["outlier_count"] > 0 for f in outliers),
     ] if v)
     status = "PASS" if fails == 0 else f"WARN ({fails} issues)"
-    print(f"\n  EDA: {status} | {len(candles):,} candles, {len(completeness['actual_days'])} days")
+    print(f"\n  EDA: {status} [{health}] | {len(candles):,} candles, {len(completeness['actual_days'])} days")
     print(f"  Report: {report_path}\n")
 
     return output_dir
