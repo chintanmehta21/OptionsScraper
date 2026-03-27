@@ -82,8 +82,6 @@ class SupabaseDB:
             ts = r["timestamp"]
             if "+" not in ts and "Z" not in ts:
                 ts = ts.replace(" ", "T") + "+05:30"
-            vol = r.get("volume")
-            oi = r.get("oi")
             candle_rows.append({
                 "strike_id": strike_id,
                 "option_type": r["option_type"],
@@ -92,8 +90,8 @@ class SupabaseDB:
                 "high": r.get("high"),
                 "low": r.get("low"),
                 "close": r.get("close"),
-                "volume": int(vol) if vol is not None else None,
-                "oi": int(oi) if oi is not None else None,
+                "volume": r.get("volume"),
+                "oi": r.get("oi"),
                 "iv": r.get("iv"),
                 "spot": r.get("spot"),
             })
@@ -132,8 +130,6 @@ class SupabaseDB:
         for r in rows:
             row = dict(r)
             row["expiry_id"] = self._expiry_id
-            if row.get("atm_strike") is not None:
-                row["atm_strike"] = int(row["atm_strike"])
             mapped.append(row)
         if mapped:
             self._batch_upsert("iv_history", mapped, "expiry_id,date")
@@ -233,8 +229,32 @@ class SupabaseDB:
 
     # ── Helpers ───────────────────────────────────────────────────────
 
+    # Columns that are INTEGER in the Postgres schema but may arrive as float
+    _INT_COLUMNS = {
+        "strike", "atm_offset", "atm_strike", "max_pain", "lot_size",
+        "volume", "oi", "ce_oi", "pe_oi", "ce_oi_chg", "pe_oi_chg",
+        "pe_ce_oi", "pe_ce_oi_chg",
+        "total_ce_oi", "total_pe_oi", "total_oi_net",
+        "total_ce_oi_chg", "total_pe_oi_chg", "total_oi_chg_net",
+        "total_bullish_oi", "total_bearish_oi",
+        "otm_ce_oi", "otm_pe_oi", "otm_oi_net",
+        "otm_ce_oi_chg", "otm_pe_oi_chg", "otm_oi_chg_net",
+        "itm_ce_oi", "itm_pe_oi", "itm_oi_net",
+        "itm_ce_oi_chg", "itm_pe_oi_chg", "itm_oi_chg_net",
+        "ce_volume", "pe_volume",
+    }
+
+    def _coerce_int_columns(self, rows):
+        """Cast float values to int for INTEGER columns before upsert."""
+        for row in rows:
+            for col in self._INT_COLUMNS:
+                val = row.get(col)
+                if isinstance(val, float):
+                    row[col] = int(val)
+
     def _batch_upsert(self, table, rows, on_conflict):
         """Upsert rows in BATCH_SIZE chunks."""
+        self._coerce_int_columns(rows)
         for i in range(0, len(rows), BATCH_SIZE):
             chunk = rows[i : i + BATCH_SIZE]
             self.client.table(table).upsert(
