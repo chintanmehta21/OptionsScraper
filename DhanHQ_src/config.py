@@ -6,7 +6,11 @@ DHAN_ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
 # Supabase credentials
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+
+# SQLite fallback path (used when Supabase is not configured)
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "nifty_options.db")
 
 # NIFTY underlying security ID
 NIFTY_SECURITY_ID = 13
@@ -42,6 +46,5 @@ LOT_SIZE = 65
 # Risk-free rate for Black-Scholes (RBI repo rate approx)
 RISK_FREE_RATE = 0.065
 
-# Database path
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "nifty_options.db")
+# Bhavcopy temp directory
 BHAVCOPY_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "bhavcopy")

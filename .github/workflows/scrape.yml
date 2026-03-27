@@ -32,15 +32,9 @@ jobs:
         env:
           DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
           DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python -m DhanHQ_src.main
-
-      - name: Upload database artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nifty-options-db-${{ github.run_number }}
-          path: data/nifty_options.db
-          retention-days: 90
 
       - name: Upload bhavcopy files
         if: always()
@@ -48,6 +42,15 @@ jobs:
         with:
           name: bhavcopy-${{ github.run_number }}
           path: data/bhavcopy/
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload EDA reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eda-${{ github.run_number }}
+          path: docs/logs/supabase/eda_*/
           retention-days: 90
           if-no-files-found: ignore
 
@@ -72,4 +75,4 @@ jobs:
         env:
           DHAN_CLIENT_ID: dummy
           DHAN_ACCESS_TOKEN: dummy
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v --ignore=tests/supabase

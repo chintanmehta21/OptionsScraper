@@ -30,13 +30,17 @@
 
 **Files:** `.claude/skills/supabase-db/SKILL.md`, `DhanHQ_src/requirements.txt`
 
-- [ ] **Step 1: Install Docker Desktop**
+- [ ] **Step 1: Install Docker Engine (via WSL2)**
 
-Download and install Docker Desktop for Windows. Verify with:
+Install Docker CLI via WSL2 (no Docker Desktop needed). In WSL2:
 ```bash
+sudo apt-get update
+sudo apt-get install docker.io docker-compose-v2
+sudo service docker start
 docker --version
 docker compose version
 ```
+Or install Docker Desktop if preferred. Supabase CLI just needs a running Docker daemon.
 
 - [ ] **Step 2: Install Supabase CLI**
 

@@ -9,7 +9,7 @@
 
 ## Prerequisites
 
-- **Docker Desktop** on Windows 11
+- **Docker Engine** (via WSL2 or Docker Desktop) on Windows 11
 - **Supabase CLI** via npm (`npx supabase`)
 - **psycopg2-binary** added to requirements
 - Local Supabase stack: `supabase init` + `supabase start`
