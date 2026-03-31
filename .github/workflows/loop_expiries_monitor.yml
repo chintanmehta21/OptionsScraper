@@ -1,0 +1,62 @@
+name: Loop Expiries Monitor
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # every hour
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year to monitor'
+        required: true
+        default: '2026'
+        type: string
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check if scraper is running
+        id: running_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUNNING=$(gh run list \
+            --workflow=loop_expiries.yml \
+            --status=in_progress \
+            --json status \
+            --jq 'length')
+          echo "running=$RUNNING" >> "$GITHUB_OUTPUT"
+          if [ "$RUNNING" -gt 0 ]; then
+            echo "## Loop Expiries Monitor" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo ":hourglass: **Scraper is still running.** Nothing to report." >> "$GITHUB_STEP_SUMMARY"
+            echo "still_running=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "still_running=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.running_check.outputs.still_running == 'false'
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: DhanHQ_src/requirements.txt
+
+      - name: Install dependencies
+        if: steps.running_check.outputs.still_running == 'false'
+        run: pip install -r DhanHQ_src/requirements.txt
+
+      - name: Query Supabase progress
+        if: steps.running_check.outputs.still_running == 'false'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          YEAR="${{ inputs.year || '2026' }}"
+          python -m DhanHQ_src.loop_expiries.runner --year "$YEAR" --status

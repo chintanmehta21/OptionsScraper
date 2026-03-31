@@ -1,0 +1,49 @@
+name: Loop Expiries Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year to scrape (e.g. 2026, 2025)'
+        required: true
+        default: '2026'
+        type: string
+      reset:
+        description: 'Reset progress and start fresh'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: DhanHQ_src/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r DhanHQ_src/requirements.txt
+
+      - name: Run loop expiries scraper
+        env:
+          DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+          DHAN_PIN: ${{ secrets.DHAN_PIN }}
+          DHAN_TOTP_SECRET: ${{ secrets.DHAN_TOTP_SECRET }}
+          DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          ARGS="--year ${{ inputs.year }}"
+          if [ "${{ inputs.reset }}" = "true" ]; then
+            ARGS="$ARGS --reset"
+          fi
+          python -m DhanHQ_src.loop_expiries.runner $ARGS
