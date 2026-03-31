@@ -21,9 +21,21 @@ class LoopExpiriesDB:
         )
 
     def setup_tables(self):
-        """Create year-specific tables via Postgres function."""
-        self.client.rpc("create_loop_tables", {"p_year": self.year}).execute()
-        logger.info("Tables ready: %s, %s", self.data_table, self.progress_table)
+        """Verify year-specific tables exist (must be pre-created via migration).
+
+        Tables are created externally: Supabase SQL Editor, MCP, or
+        ``SELECT create_loop_tables(year);`` — PostgREST cannot run DDL.
+        """
+        try:
+            self.client.table(self.progress_table).select("*").limit(1).execute()
+            self.client.table(self.data_table).select("*").limit(1).execute()
+            logger.info("Tables verified: %s, %s", self.data_table, self.progress_table)
+        except Exception as e:
+            raise RuntimeError(
+                f"Tables {self.data_table} / {self.progress_table} not found. "
+                f"Create them first: SELECT create_loop_tables({self.year}); — "
+                f"Error: {e}"
+            )
 
     def seed_progress(self, expiries: list[dict]) -> int:
         """Seed progress table with pending entries, skip already completed/skipped."""

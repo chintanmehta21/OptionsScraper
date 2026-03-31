@@ -33,6 +33,23 @@ _CI = os.environ.get("GITHUB_ACTIONS") == "true"
 _TOKEN_MAX_AGE_S = 20 * 3600
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Format seconds into human-readable duration like '1m32s' or '45s'."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    m, s = divmod(int(seconds), 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
+
+
+def _progress_bar(current: int, total: int, width: int = 20) -> str:
+    """Render a text progress bar like '████████░░░░░░░░░░░░'."""
+    filled = int(width * current / total) if total > 0 else 0
+    return "\u2588" * filled + "\u2591" * (width - filled)
+
+
 def _group(title):
     if _CI:
         print(f"::group::{title}", flush=True)
@@ -147,9 +164,11 @@ def run_loop(year: int, reset: bool = False) -> dict:
             started_at=datetime.now(IST).isoformat(),
         )
 
+        expiry_start = time.time()
         try:
             rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry)
             now_str = datetime.now(IST).isoformat()
+            expiry_dur = time.time() - expiry_start
 
             if empty_count == api_calls:
                 db.update_progress(
@@ -159,7 +178,7 @@ def run_loop(year: int, reset: bool = False) -> dict:
                     completed_at=now_str,
                 )
                 stats["skipped"] += 1
-                logger.info("  SKIPPED (holiday): all %d calls empty", api_calls)
+                logger.info("  SKIPPED (holiday) | took %s", _fmt_duration(expiry_dur))
             else:
                 db.insert_candles(rows, exp_flag)
                 db.update_progress(
@@ -175,12 +194,19 @@ def run_loop(year: int, reset: bool = False) -> dict:
                 elapsed = time.time() - start_time
                 done_in_session = i - already_done
                 avg = elapsed / done_in_session if done_in_session > 0 else 0
-                eta = avg * (total - i) / 60
+                remaining = total - i
+                eta = avg * remaining / 60
+
+                bar = _progress_bar(i, total, width=20)
                 logger.info(
-                    "  %s | %d rows | ETA: %.0fm", label, len(rows), eta
+                    "  %s %s | %d rows | took %s | ETA: %s (%d left)",
+                    label, bar, len(rows),
+                    _fmt_duration(expiry_dur), _fmt_duration(eta * 60),
+                    remaining,
                 )
 
         except Exception as e:
+            expiry_dur = time.time() - expiry_start
             db.update_progress(
                 exp_date, exp_flag,
                 status="failed",
@@ -188,7 +214,7 @@ def run_loop(year: int, reset: bool = False) -> dict:
                 completed_at=datetime.now(IST).isoformat(),
             )
             stats["failed"] += 1
-            logger.error("  FAILED: %s", e)
+            logger.error("  FAILED after %s: %s", _fmt_duration(expiry_dur), e)
 
         _endgroup()
 

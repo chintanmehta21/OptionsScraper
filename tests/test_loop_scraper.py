@@ -26,11 +26,11 @@ def db(mock_supabase):
 
 
 class TestLoopExpiriesDBSetup:
-    def test_setup_tables_calls_rpc(self, db, mock_supabase):
+    def test_setup_tables_verifies_tables(self, db, mock_supabase):
         db.setup_tables()
-        mock_supabase.rpc.assert_called_once_with(
-            "create_loop_tables", {"p_year": 2026}
-        )
+        # Verifies both tables exist via select queries
+        mock_supabase.table.assert_any_call("scrape_progress_2026")
+        mock_supabase.table.assert_any_call("full_expiries_2026")
 
     def test_table_names(self, db):
         assert db.data_table == "full_expiries_2026"
