@@ -56,8 +56,9 @@ def generate_access_token(client_id: str, pin: str, totp_secret: str) -> str:
 
             token = data.get("accessToken") or data.get("access_token")
             if not token:
+                msg = data.get("message", data.get("remarks", ""))
                 raise RuntimeError(
-                    f"No token in auth response keys: {list(data.keys())}"
+                    f"No token in auth response: {msg} (keys: {list(data.keys())})"
                 )
 
             logger.info("DHAN_DYNAMIC_ACCESS generated successfully (expires: %s)",
