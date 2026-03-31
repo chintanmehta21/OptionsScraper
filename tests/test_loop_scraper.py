@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 from DhanHQ_src.loop_expiries.db import LoopExpiriesDB
+from DhanHQ_src.loop_expiries.scraper import scrape_single_expiry, run_loop
 
 
 @pytest.fixture
@@ -132,3 +133,116 @@ class TestGetProgressSummary:
         assert summary["total_rows"] == 5000
         assert len(summary["failed_details"]) == 1
         assert summary["failed_details"][0]["error_message"] == "timeout"
+
+
+def _make_api_response(n_candles=3):
+    """Build a fake DhanHQ parallel-array response."""
+    return {
+        "timestamp": [1742108100 + i * 60 for i in range(n_candles)],
+        "open": [500.0] * n_candles,
+        "high": [510.0] * n_candles,
+        "low": [495.0] * n_candles,
+        "close": [505.0] * n_candles,
+        "volume": [1000] * n_candles,
+        "oi": [50000] * n_candles,
+        "iv": [25.5] * n_candles,
+        "spot": [23250.0] * n_candles,
+        "strike": [23200] * n_candles,
+    }
+
+
+class TestScrapeSingleExpiry:
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_with_retry")
+    @patch("DhanHQ_src.loop_expiries.scraper.time")
+    def test_returns_rows_and_counts(self, mock_time, mock_fetch):
+        mock_fetch.return_value = _make_api_response(3)
+        expiry = {
+            "expiry_date": "2026-01-01",
+            "expiry_flag": "WEEK",
+            "from_date": "2025-12-18",
+            "to_date": "2026-01-01",
+        }
+        dhan = MagicMock()
+        rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry)
+
+        assert api_calls == 42  # 21 strikes x 2 types
+        assert empty_count == 0
+        assert len(rows) == 3 * 42  # 3 candles x 42 calls
+
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_with_retry")
+    @patch("DhanHQ_src.loop_expiries.scraper.time")
+    def test_empty_response_counted(self, mock_time, mock_fetch):
+        mock_fetch.return_value = {}  # empty
+        expiry = {
+            "expiry_date": "2026-01-01",
+            "expiry_flag": "WEEK",
+            "from_date": "2025-12-18",
+            "to_date": "2026-01-01",
+        }
+        dhan = MagicMock()
+        rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry)
+
+        assert api_calls == 42
+        assert empty_count == 42
+        assert len(rows) == 0
+
+
+class TestRunLoop:
+    @patch("DhanHQ_src.loop_expiries.scraper.LoopExpiriesDB")
+    @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
+    @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
+    @patch("DhanHQ_src.loop_expiries.scraper.scrape_single_expiry")
+    def test_skips_completed_expiries(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls):
+        mock_db = MagicMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.get_pending_expiries.return_value = []
+        mock_db.get_progress_summary.return_value = {
+            "completed": 2, "failed": 0, "skipped": 0,
+            "pending": 0, "in_progress": 0, "total": 2, "total_rows": 10000,
+            "failed_details": [],
+        }
+
+        stats = run_loop(2026)
+        mock_scrape.assert_not_called()
+        assert stats["completed"] == 0
+
+    @patch("DhanHQ_src.loop_expiries.scraper.LoopExpiriesDB")
+    @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
+    @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
+    @patch("DhanHQ_src.loop_expiries.scraper.scrape_single_expiry")
+    def test_marks_skipped_on_all_empty(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls):
+        mock_db = MagicMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.get_pending_expiries.return_value = [
+            {"expiry_date": "2026-01-01", "expiry_flag": "WEEK"},
+        ]
+        mock_db.get_progress_summary.return_value = {
+            "completed": 0, "failed": 0, "skipped": 0,
+            "pending": 1, "in_progress": 0, "total": 1, "total_rows": 0,
+            "failed_details": [],
+        }
+        mock_scrape.return_value = ([], 42, 42)
+
+        stats = run_loop(2026)
+        calls = mock_db.update_progress.call_args_list
+        assert "skipped" in [c.kwargs["status"] for c in calls if "status" in c.kwargs]
+
+    @patch("DhanHQ_src.loop_expiries.scraper.LoopExpiriesDB")
+    @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
+    @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
+    @patch("DhanHQ_src.loop_expiries.scraper.scrape_single_expiry")
+    def test_marks_failed_on_error(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls):
+        mock_db = MagicMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.get_pending_expiries.return_value = [
+            {"expiry_date": "2026-01-01", "expiry_flag": "WEEK"},
+        ]
+        mock_db.get_progress_summary.return_value = {
+            "completed": 0, "failed": 0, "skipped": 0,
+            "pending": 1, "in_progress": 0, "total": 1, "total_rows": 0,
+            "failed_details": [],
+        }
+        mock_scrape.side_effect = RuntimeError("API timeout")
+
+        stats = run_loop(2026)
+        assert stats["failed"] == 1
