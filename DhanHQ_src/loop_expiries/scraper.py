@@ -1,6 +1,7 @@
 """Core loop: iterate expiries, fetch raw candles, track progress."""
 
 import os
+import sys
 import time
 import logging
 from datetime import datetime, timezone, timedelta, date as dt_date
@@ -22,8 +23,8 @@ from DhanHQ_src.config import (
 from DhanHQ_src.loop_expiries.config import (
     LOOP_STRIKES,
     LOOP_OPTION_TYPES,
-    generate_expiry_dates,
 )
+from DhanHQ_src.loop_expiries.expiry_fetcher import fetch_all_expiry_dates
 from DhanHQ_src.loop_expiries.db import LoopExpiriesDB
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,6 @@ _TOKEN_MAX_AGE_S = 20 * 3600
 
 
 def _fmt_duration(seconds: float) -> str:
-    """Format seconds into human-readable duration like '1m32s' or '45s'."""
     if seconds < 60:
         return f"{seconds:.0f}s"
     m, s = divmod(int(seconds), 60)
@@ -44,21 +44,34 @@ def _fmt_duration(seconds: float) -> str:
     return f"{h}h{m:02d}m"
 
 
-def _progress_bar(current: int, total: int, width: int = 20) -> str:
-    """Render a text progress bar like '████████░░░░░░░░░░░░'."""
+def _progress_bar(current: int, total: int, width: int = 30) -> str:
     filled = int(width * current / total) if total > 0 else 0
     return "\u2588" * filled + "\u2591" * (width - filled)
 
 
-def _group(title):
-    if _CI:
-        print(f"::group::{title}", flush=True)
-    logger.info(title)
+def _print_progress(i: int, total: int, exp_date: str, exp_flag: str,
+                     status: str, rows: int, dur: float, eta_s: float):
+    """Print a single tqdm-style progress line (overwrites previous on TTY)."""
+    pct = i / total * 100 if total > 0 else 0
+    bar = _progress_bar(i, total)
+    eta = _fmt_duration(eta_s) if eta_s > 0 else "--"
+    flag = "W" if exp_flag == "WEEK" else "M"
 
+    if status == "skipped":
+        detail = "SKIP"
+    elif status == "failed":
+        detail = "FAIL"
+    else:
+        detail = f"{rows:,}r"
 
-def _endgroup():
+    line = f"  {pct:5.1f}% {bar} {i}/{total} | {exp_date} {flag} | {detail} | {_fmt_duration(dur)} | ETA {eta}"
+
     if _CI:
-        print("::endgroup::", flush=True)
+        # GitHub Actions: plain lines (no \r)
+        print(line, flush=True)
+    else:
+        # TTY: overwrite line
+        print(f"\r{line}", end="", flush=True)
 
 
 def scrape_single_expiry(dhan, expiry: dict):
@@ -108,40 +121,48 @@ def scrape_single_expiry(dhan, expiry: dict):
 def run_loop(year: int, reset: bool = False) -> dict:
     """Main loop: scrape all expiries for a year with resume support."""
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING if _CI else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # ── Step 1: Authenticate ─────────────────────────────────────
+    token = get_access_token()
+    token_time = time.time()
+    dhan = create_dhan_client(token)
+
+    # ── Step 2: Fetch actual expiry dates from NSE Bhavcopy ─────
+    expiries = fetch_all_expiry_dates(year)
+
+    if not expiries:
+        print(f"ERROR: No expiry dates found for {year}. Cannot proceed.", flush=True)
+        return {"completed": 0, "failed": 0, "skipped": 0, "total_rows": 0}
+
+    total = len(expiries)
+    weeks = sum(1 for e in expiries if e["expiry_flag"] == "WEEK")
+    months = sum(1 for e in expiries if e["expiry_flag"] == "MONTH")
+
+    # ── Step 3: Setup DB and seed progress ───────────────────────
     db = LoopExpiriesDB(year)
     db.setup_tables()
-
-    expiries = generate_expiry_dates(year)
-    total = len(expiries)
-    logger.info("=" * 60)
-    logger.info("Loop Expiries Scraper — year %d (%d expiries)", year, total)
-    logger.info("=" * 60)
 
     if reset:
         db.reset_progress()
 
     db.seed_progress(expiries)
 
-    token = get_access_token()
-    token_time = time.time()
-    dhan = create_dhan_client(token)
-
+    # ── Step 4: Scrape pending expiries ──────────────────────────
     pending = db.get_pending_expiries()
     already_done = total - len(pending)
-    logger.info("Resuming: %d done, %d to process", already_done, len(pending))
+
+    print(f"  Loop Expiries — {year} | {total} expiries ({weeks}W + {months}M) | {len(pending)} pending", flush=True)
 
     start_time = time.time()
     stats = {"completed": 0, "failed": 0, "skipped": 0, "total_rows": 0}
 
-    for i, progress_row in enumerate(pending, already_done + 1):
+    for idx, progress_row in enumerate(pending, already_done + 1):
         exp_date = progress_row["expiry_date"]
         exp_flag = progress_row["expiry_flag"]
-        # Reconstruct from_date/to_date (progress table only stores PK fields)
         exp_dt = dt_date.fromisoformat(exp_date)
         expiry = {
             "expiry_date": exp_date,
@@ -149,15 +170,12 @@ def run_loop(year: int, reset: bool = False) -> dict:
             "from_date": (exp_dt - timedelta(days=14)).isoformat(),
             "to_date": exp_date,
         }
-        label = f"[{i}/{total}] {i / total * 100:.1f}% | {exp_date} {exp_flag}"
 
         if time.time() - token_time > _TOKEN_MAX_AGE_S:
-            logger.info("Refreshing access token (>20h old)")
             token = get_access_token()
             token_time = time.time()
             dhan = create_dhan_client(token)
 
-        _group(label)
         db.update_progress(
             exp_date, exp_flag,
             status="in_progress",
@@ -170,6 +188,12 @@ def run_loop(year: int, reset: bool = False) -> dict:
             now_str = datetime.now(IST).isoformat()
             expiry_dur = time.time() - expiry_start
 
+            elapsed = time.time() - start_time
+            done_in_session = idx - already_done
+            avg = elapsed / done_in_session if done_in_session > 0 else 0
+            remaining = total - idx
+            eta_s = avg * remaining
+
             if empty_count == api_calls:
                 db.update_progress(
                     exp_date, exp_flag,
@@ -178,7 +202,7 @@ def run_loop(year: int, reset: bool = False) -> dict:
                     completed_at=now_str,
                 )
                 stats["skipped"] += 1
-                logger.info("  SKIPPED (holiday) | took %s", _fmt_duration(expiry_dur))
+                _print_progress(idx, total, exp_date, exp_flag, "skipped", 0, expiry_dur, eta_s)
             else:
                 db.insert_candles(rows, exp_flag)
                 db.update_progress(
@@ -190,20 +214,7 @@ def run_loop(year: int, reset: bool = False) -> dict:
                 )
                 stats["completed"] += 1
                 stats["total_rows"] += len(rows)
-
-                elapsed = time.time() - start_time
-                done_in_session = i - already_done
-                avg = elapsed / done_in_session if done_in_session > 0 else 0
-                remaining = total - i
-                eta = avg * remaining / 60
-
-                bar = _progress_bar(i, total, width=20)
-                logger.info(
-                    "  %s %s | %d rows | took %s | ETA: %s (%d left)",
-                    label, bar, len(rows),
-                    _fmt_duration(expiry_dur), _fmt_duration(eta * 60),
-                    remaining,
-                )
+                _print_progress(idx, total, exp_date, exp_flag, "ok", len(rows), expiry_dur, eta_s)
 
         except Exception as e:
             expiry_dur = time.time() - expiry_start
@@ -214,21 +225,22 @@ def run_loop(year: int, reset: bool = False) -> dict:
                 completed_at=datetime.now(IST).isoformat(),
             )
             stats["failed"] += 1
-            logger.error("  FAILED after %s: %s", _fmt_duration(expiry_dur), e)
+            elapsed = time.time() - start_time
+            done_in_session = idx - already_done
+            avg = elapsed / done_in_session if done_in_session > 0 else 0
+            eta_s = avg * (total - idx)
+            _print_progress(idx, total, exp_date, exp_flag, "failed", 0, expiry_dur, eta_s)
+            logger.error("FAILED %s %s: %s", exp_date, exp_flag, e)
 
-        _endgroup()
+    if not _CI:
+        print()  # Newline after last \r progress line
 
     elapsed_total = time.time() - start_time
-    logger.info("=" * 60)
-    logger.info(
-        "DONE: %d completed, %d failed, %d skipped | %d rows | %.1fm",
-        stats["completed"],
-        stats["failed"],
-        stats["skipped"],
-        stats["total_rows"],
-        elapsed_total / 60,
+    print(
+        f"  DONE: {stats['completed']}ok {stats['failed']}fail {stats['skipped']}skip | "
+        f"{stats['total_rows']:,} rows | {_fmt_duration(elapsed_total)}",
+        flush=True,
     )
-    logger.info("=" * 60)
 
     _write_job_summary(year, db, elapsed_total)
 

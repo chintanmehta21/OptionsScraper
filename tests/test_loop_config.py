@@ -1,11 +1,12 @@
 import pytest
 from datetime import date
+
 from DhanHQ_src.loop_expiries.config import (
-    generate_expiry_dates,
     get_lot_size,
     LOOP_STRIKES,
     LOOP_OPTION_TYPES,
 )
+from DhanHQ_src.loop_expiries.expiry_fetcher import classify_expiry_dates
 
 
 class TestLoopStrikes:
@@ -25,64 +26,64 @@ class TestLoopStrikes:
         assert LOOP_OPTION_TYPES == ["CALL", "PUT"]
 
 
-class TestGenerateExpiryDates:
+class TestClassifyExpiryDates:
+    """Position-based: every date = WEEK, last of each month = also MONTH."""
+
+    # Realistic bhavcopy dates (Tuesdays + holiday-shifted Mondays)
+    SAMPLE_DATES = [
+        "2026-01-06", "2026-01-13", "2026-01-20", "2026-01-27",
+        "2026-02-03", "2026-02-10", "2026-02-17", "2026-02-24",
+        "2026-03-02", "2026-03-10", "2026-03-17", "2026-03-24", "2026-03-30",
+    ]
+
     def test_returns_list(self):
-        result = generate_expiry_dates(2026)
+        result = classify_expiry_dates(self.SAMPLE_DATES, 2026)
         assert isinstance(result, list)
         assert len(result) > 0
 
-    def test_all_thursdays(self):
-        result = generate_expiry_dates(2026)
-        for entry in result:
-            d = date.fromisoformat(entry["expiry_date"])
-            assert d.weekday() == 3, f"{entry['expiry_date']} is not Thursday"
-
-    def test_weekly_count_roughly_52(self):
-        result = generate_expiry_dates(2026)
+    def test_every_date_gets_week_entry(self):
+        result = classify_expiry_dates(self.SAMPLE_DATES, 2026)
         weekly = [e for e in result if e["expiry_flag"] == "WEEK"]
-        assert 50 <= len(weekly) <= 53
+        assert len(weekly) == len(self.SAMPLE_DATES)
 
-    def test_monthly_count_is_12(self):
-        result = generate_expiry_dates(2026)
+    def test_last_per_month_also_gets_month_entry(self):
+        result = classify_expiry_dates(self.SAMPLE_DATES, 2026)
         monthly = [e for e in result if e["expiry_flag"] == "MONTH"]
-        assert len(monthly) == 12
+        assert len(monthly) == 3  # Jan, Feb, Mar
+        monthly_dates = {m["expiry_date"] for m in monthly}
+        assert monthly_dates == {"2026-01-27", "2026-02-24", "2026-03-30"}
 
     def test_from_date_is_14_days_before(self):
-        result = generate_expiry_dates(2026)
+        result = classify_expiry_dates(self.SAMPLE_DATES, 2026)
         for entry in result:
             exp = date.fromisoformat(entry["expiry_date"])
             frm = date.fromisoformat(entry["from_date"])
             assert (exp - frm).days == 14
 
     def test_to_date_equals_expiry(self):
-        result = generate_expiry_dates(2026)
+        result = classify_expiry_dates(self.SAMPLE_DATES, 2026)
         for entry in result:
             assert entry["to_date"] == entry["expiry_date"]
 
-    def test_all_dates_in_year(self):
-        result = generate_expiry_dates(2026)
+    def test_filters_to_target_year(self):
+        mixed = ["2025-12-30", "2026-01-06", "2027-01-06"]
+        result = classify_expiry_dates(mixed, 2026)
         for entry in result:
-            d = date.fromisoformat(entry["expiry_date"])
-            assert d.year == 2026
+            assert entry["expiry_date"].startswith("2026")
 
-    def test_monthly_is_last_thursday(self):
-        import calendar
-        from datetime import timedelta
-        result = generate_expiry_dates(2026)
-        monthly = [e for e in result if e["expiry_flag"] == "MONTH"]
-        for entry in monthly:
-            d = date.fromisoformat(entry["expiry_date"])
-            _, last_day = calendar.monthrange(d.year, d.month)
-            last_date = date(d.year, d.month, last_day)
-            while last_date.weekday() != 3:
-                last_date -= timedelta(days=1)
-            assert d == last_date, f"{d} is not last Thursday of {d.month}"
+    def test_deduplicates_dates(self):
+        dupes = ["2026-01-06", "2026-01-06", "2026-01-13"]
+        result = classify_expiry_dates(dupes, 2026)
+        weekly = [e for e in result if e["expiry_flag"] == "WEEK"]
+        assert len(weekly) == 2
 
-    def test_works_for_other_years(self):
-        for year in [2024, 2025]:
-            result = generate_expiry_dates(year)
-            weekly = [e for e in result if e["expiry_flag"] == "WEEK"]
-            assert 50 <= len(weekly) <= 53
+    def test_empty_input(self):
+        assert classify_expiry_dates([], 2026) == []
+
+    def test_sorted_output(self):
+        result = classify_expiry_dates(self.SAMPLE_DATES, 2026)
+        pairs = [(e["expiry_date"], e["expiry_flag"]) for e in result]
+        assert pairs == sorted(pairs)
 
 
 class TestGetLotSize:

@@ -25,6 +25,13 @@ def db(mock_supabase):
         return LoopExpiriesDB(2026, url="http://fake", key="fake-key")
 
 
+# Shared fake expiry list returned by fetch_all_expiry_dates
+FAKE_EXPIRIES = [
+    {"expiry_date": "2026-01-06", "expiry_flag": "WEEK", "from_date": "2025-12-23", "to_date": "2026-01-06"},
+    {"expiry_date": "2026-01-06", "expiry_flag": "MONTH", "from_date": "2025-12-23", "to_date": "2026-01-06"},
+]
+
+
 class TestLoopExpiriesDBSetup:
     def test_setup_tables_verifies_tables(self, db, mock_supabase):
         db.setup_tables()
@@ -188,11 +195,12 @@ class TestScrapeSingleExpiry:
 
 
 class TestRunLoop:
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_all_expiry_dates", return_value=FAKE_EXPIRIES)
     @patch("DhanHQ_src.loop_expiries.scraper.LoopExpiriesDB")
     @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
     @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
     @patch("DhanHQ_src.loop_expiries.scraper.scrape_single_expiry")
-    def test_skips_completed_expiries(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls):
+    def test_skips_completed_expiries(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls, mock_fetch_dates):
         mock_db = MagicMock()
         mock_db_cls.return_value = mock_db
         mock_db.get_pending_expiries.return_value = []
@@ -206,15 +214,16 @@ class TestRunLoop:
         mock_scrape.assert_not_called()
         assert stats["completed"] == 0
 
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_all_expiry_dates", return_value=FAKE_EXPIRIES)
     @patch("DhanHQ_src.loop_expiries.scraper.LoopExpiriesDB")
     @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
     @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
     @patch("DhanHQ_src.loop_expiries.scraper.scrape_single_expiry")
-    def test_marks_skipped_on_all_empty(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls):
+    def test_marks_skipped_on_all_empty(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls, mock_fetch_dates):
         mock_db = MagicMock()
         mock_db_cls.return_value = mock_db
         mock_db.get_pending_expiries.return_value = [
-            {"expiry_date": "2026-01-01", "expiry_flag": "WEEK"},
+            {"expiry_date": "2026-01-06", "expiry_flag": "WEEK"},
         ]
         mock_db.get_progress_summary.return_value = {
             "completed": 0, "failed": 0, "skipped": 0,
@@ -227,15 +236,16 @@ class TestRunLoop:
         calls = mock_db.update_progress.call_args_list
         assert "skipped" in [c.kwargs["status"] for c in calls if "status" in c.kwargs]
 
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_all_expiry_dates", return_value=FAKE_EXPIRIES)
     @patch("DhanHQ_src.loop_expiries.scraper.LoopExpiriesDB")
     @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
     @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
     @patch("DhanHQ_src.loop_expiries.scraper.scrape_single_expiry")
-    def test_marks_failed_on_error(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls):
+    def test_marks_failed_on_error(self, mock_scrape, mock_auth, mock_dhan, mock_db_cls, mock_fetch_dates):
         mock_db = MagicMock()
         mock_db_cls.return_value = mock_db
         mock_db.get_pending_expiries.return_value = [
-            {"expiry_date": "2026-01-01", "expiry_flag": "WEEK"},
+            {"expiry_date": "2026-01-06", "expiry_flag": "WEEK"},
         ]
         mock_db.get_progress_summary.return_value = {
             "completed": 0, "failed": 0, "skipped": 0,
@@ -246,3 +256,12 @@ class TestRunLoop:
 
         stats = run_loop(2026)
         assert stats["failed"] == 1
+
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_all_expiry_dates", return_value=[])
+    @patch("DhanHQ_src.loop_expiries.scraper.create_dhan_client")
+    @patch("DhanHQ_src.loop_expiries.scraper.get_access_token", return_value="fake-token")
+    def test_empty_expiry_list_returns_early(self, mock_auth, mock_dhan, mock_fetch_dates):
+        """If no expiry dates found, return early without crashing."""
+        stats = run_loop(2026)
+        assert stats["completed"] == 0
+        assert stats["total_rows"] == 0
