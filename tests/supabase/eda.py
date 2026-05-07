@@ -13,6 +13,8 @@ import sys
 from collections import defaultdict
 from datetime import datetime, date as dt_date, timedelta
 
+import requests
+
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -28,14 +30,38 @@ NUMERIC_FIELDS = ["open", "high", "low", "close", "volume", "oi", "iv", "spot"]
 EXPECTED_STRIKES = len(STRIKES)  # 9
 OPTION_TYPES = ["CE", "PE"]
 
-# NSE holidays FY 2025-26 (source: NSE circular)
-NSE_HOLIDAYS = {
-    "2025-04-10", "2025-04-14", "2025-04-18", "2025-05-01", "2025-07-17",
-    "2025-08-15", "2025-08-27", "2025-10-02", "2025-10-20", "2025-10-21",
-    "2025-10-22", "2025-11-05", "2025-11-26", "2025-12-25",
-    "2026-01-26", "2026-02-19", "2026-03-10", "2026-03-26",
-    "2026-03-31", "2026-04-02", "2026-04-03", "2026-04-14",
-}
+# Dynamic NSE holiday fetch — queries NSE API, caches for the session
+_nse_holidays_cache = None
+
+
+def _fetch_nse_holidays():
+    """Fetch CM trading holidays from NSE API. Silent — returns empty set on failure."""
+    global _nse_holidays_cache
+    if _nse_holidays_cache is not None:
+        return _nse_holidays_cache
+
+    try:
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+        })
+        s.get("https://www.nseindia.com", timeout=10)
+        resp = s.get("https://www.nseindia.com/api/holiday-master?type=trading", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        cm_holidays = data.get("CM", [])
+        dates = set()
+        for h in cm_holidays:
+            dt = datetime.strptime(h["tradingDate"], "%d-%b-%Y").date()
+            dates.add(dt.isoformat())
+        _nse_holidays_cache = dates
+        logger.info("Fetched %d NSE CM trading holidays from nseindia.com", len(dates))
+        return dates
+    except Exception as e:
+        logger.warning("NSE holiday fetch failed (non-fatal): %s", e)
+        _nse_holidays_cache = set()
+        return _nse_holidays_cache
 
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -62,12 +88,13 @@ def _fetch_all(client, table, select="*", filters=None, order="timestamp"):
 
 def _expected_trading_days(from_date, to_date):
     """Generate weekday dates in [from_date, to_date) excluding NSE holidays."""
+    holidays = _fetch_nse_holidays()
     start = dt_date.fromisoformat(from_date)
     end = dt_date.fromisoformat(to_date)
     days = []
     d = start
     while d < end:
-        if d.weekday() < 5 and d.isoformat() not in NSE_HOLIDAYS:
+        if d.weekday() < 5 and d.isoformat() not in holidays:
             days.append(d.isoformat())
         d += timedelta(days=1)
     return days
@@ -143,7 +170,8 @@ def check_completeness(strikes, candles, from_date, to_date, expiry_date):
             day_strikes[d].add(s_info["strike"])
 
     # Holidays that fall in the expected range
-    holidays_in_range = [d for d in sorted(NSE_HOLIDAYS)
+    holidays = _fetch_nse_holidays()
+    holidays_in_range = [d for d in sorted(holidays)
                          if from_date <= d < to_date and dt_date.fromisoformat(d).weekday() < 5]
 
     # Missing dates (not holidays, not future)

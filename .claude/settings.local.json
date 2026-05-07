@@ -44,7 +44,10 @@
       "Bash(docker version:*)",
       "Bash(tasklist)",
       "Bash(cmd.exe /c \"tasklist /FI \\\\\"IMAGENAME eq Docker*\\\\\"\" 2>&1)",
-      "Bash(powershell.exe -Command \"Get-Process -Name '*docker*' -ErrorAction SilentlyContinue | Select-Object Name,Id | Format-Table\" 2>&1)"
+      "Bash(powershell.exe -Command \"Get-Process -Name '*docker*' -ErrorAction SilentlyContinue | Select-Object Name,Id | Format-Table\" 2>&1)",
+      "Bash(wc:*)",
+      "Bash(gh run:*)",
+      "mcp__claude_ai_Context7__resolve-library-id"
     ]
   }
 }

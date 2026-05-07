@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
 ROLLING_OPTION_URL = "https://api.dhan.co/v2/charts/rollingoption"
 
-
 class DhanClient:
     """Wrapper for DhanHQ expired options API using direct REST calls."""
 

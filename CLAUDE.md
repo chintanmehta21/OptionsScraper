@@ -7,6 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Never add "Co-Authored-By" or attribution lines
 - No multi-line commit messages unless absolutely necessary
 
+## Execution Preference
+- Always use subagent-driven development by default for plan execution
+- Never ask for execution approach choice — just use subagent-driven
+
 ## Commands
 
 ```bash
