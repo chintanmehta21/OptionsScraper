@@ -169,12 +169,17 @@ class TestScrapeSingleExpiry:
             "from_date": "2025-12-18",
             "to_date": "2026-01-01",
         }
+        symbol_cfg = {"security_id": 13, "exchange_segment": "NSE_FNO", "instrument": "INDEX"}
         dhan = MagicMock()
-        rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry)
+        rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry, symbol_cfg)
 
         assert api_calls == 42  # 21 strikes x 2 types
         assert empty_count == 0
         assert len(rows) == 3 * 42  # 3 candles x 42 calls
+        # First fetch_with_retry call payload should include the symbol_cfg values
+        first_call_kwargs = mock_fetch.call_args_list[0].kwargs
+        assert first_call_kwargs["security_id"] == 13
+        assert first_call_kwargs["exchange_segment"] == "NSE_FNO"
 
     @patch("DhanHQ_src.loop_expiries.scraper.fetch_with_retry")
     @patch("DhanHQ_src.loop_expiries.scraper.time")
@@ -186,12 +191,31 @@ class TestScrapeSingleExpiry:
             "from_date": "2025-12-18",
             "to_date": "2026-01-01",
         }
+        symbol_cfg = {"security_id": 13, "exchange_segment": "NSE_FNO", "instrument": "INDEX"}
         dhan = MagicMock()
-        rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry)
+        rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry, symbol_cfg)
 
         assert api_calls == 42
         assert empty_count == 42
         assert len(rows) == 0
+
+    @patch("DhanHQ_src.loop_expiries.scraper.fetch_with_retry")
+    @patch("DhanHQ_src.loop_expiries.scraper.time")
+    def test_sensex_symbol_cfg_propagates(self, mock_time, mock_fetch):
+        """SENSEX symbol_cfg must be passed verbatim to fetch_with_retry."""
+        mock_fetch.return_value = _make_api_response(1)
+        expiry = {
+            "expiry_date": "2026-05-07",
+            "expiry_flag": "WEEK",
+            "from_date": "2026-04-23",
+            "to_date": "2026-05-07",
+        }
+        symbol_cfg = {"security_id": 51, "exchange_segment": "BSE_FNO", "instrument": "OPTIDX"}
+        dhan = MagicMock()
+        scrape_single_expiry(dhan, expiry, symbol_cfg)
+        first_kwargs = mock_fetch.call_args_list[0].kwargs
+        assert first_kwargs["security_id"] == 51
+        assert first_kwargs["exchange_segment"] == "BSE_FNO"
 
 
 class TestRunLoop:

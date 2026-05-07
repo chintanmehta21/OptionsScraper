@@ -26,3 +26,18 @@ _LOT_SIZE_FALLBACK = 75
 def get_lot_size(year: int) -> int:
     """Return NIFTY lot size for a given year."""
     return NIFTY_LOT_SIZES.get(year, _LOT_SIZE_FALLBACK)
+
+
+# Symbol configuration for the parameterized scraper.
+# Keep all NIFTY constants here so the existing loop pipeline keeps working.
+from DhanHQ_src.config import (
+    NIFTY_SECURITY_ID,
+    EXCHANGE_SEGMENT,
+    INSTRUMENT_TYPE,
+)
+
+NIFTY_SYMBOL_CFG = {
+    "security_id": NIFTY_SECURITY_ID,
+    "exchange_segment": EXCHANGE_SEGMENT,
+    "instrument": INSTRUMENT_TYPE,
+}

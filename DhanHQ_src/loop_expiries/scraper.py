@@ -14,8 +14,6 @@ from DhanHQ_src.fetcher import (
     build_raw_rows,
 )
 from DhanHQ_src.config import (
-    NIFTY_SECURITY_ID,
-    EXCHANGE_SEGMENT,
     INSTRUMENT_TYPE,
     REQUIRED_DATA,
     API_DELAY_SECONDS,
@@ -23,6 +21,7 @@ from DhanHQ_src.config import (
 from DhanHQ_src.loop_expiries.config import (
     LOOP_STRIKES,
     LOOP_OPTION_TYPES,
+    NIFTY_SYMBOL_CFG,
 )
 from DhanHQ_src.loop_expiries.expiry_fetcher import fetch_all_expiry_dates
 from DhanHQ_src.loop_expiries.db import LoopExpiriesDB
@@ -74,8 +73,14 @@ def _print_progress(i: int, total: int, exp_date: str, exp_flag: str,
         print(f"\r{line}", end="", flush=True)
 
 
-def scrape_single_expiry(dhan, expiry: dict):
+def scrape_single_expiry(dhan, expiry: dict, symbol_cfg: dict, strikes=None):
     """Fetch all strikes x option types for one expiry.
+
+    Args:
+        dhan: DhanClient instance.
+        expiry: dict with keys expiry_date, expiry_flag, from_date, to_date.
+        symbol_cfg: dict with keys security_id, exchange_segment, instrument.
+        strikes: optional list of ATM-relative strike strings; defaults to LOOP_STRIKES.
 
     Returns (rows, api_calls, empty_count).
     """
@@ -84,20 +89,21 @@ def scrape_single_expiry(dhan, expiry: dict):
     from_date = expiry["from_date"]
     to_date = expiry["to_date"]
 
-    strike_offsets = {s: i - len(LOOP_STRIKES) // 2 for i, s in enumerate(LOOP_STRIKES)}
+    _strikes = strikes if strikes is not None else LOOP_STRIKES
+    strike_offsets = {s: i - len(_strikes) // 2 for i, s in enumerate(_strikes)}
 
     all_rows = []
     api_calls = 0
     empty_count = 0
 
-    for strike in LOOP_STRIKES:
+    for strike in _strikes:
         for option_type in LOOP_OPTION_TYPES:
             api_calls += 1
             response = fetch_with_retry(
                 dhan,
-                security_id=NIFTY_SECURITY_ID,
-                exchange_segment=EXCHANGE_SEGMENT,
-                instrument_type=INSTRUMENT_TYPE,
+                security_id=symbol_cfg["security_id"],
+                exchange_segment=symbol_cfg["exchange_segment"],
+                instrument_type=symbol_cfg.get("instrument", INSTRUMENT_TYPE),
                 expiry_flag=expiry_flag,
                 expiry_code=1,
                 strike=strike,
@@ -184,7 +190,7 @@ def run_loop(year: int, reset: bool = False) -> dict:
 
         expiry_start = time.time()
         try:
-            rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry)
+            rows, api_calls, empty_count = scrape_single_expiry(dhan, expiry, NIFTY_SYMBOL_CFG)
             now_str = datetime.now(IST).isoformat()
             expiry_dur = time.time() - expiry_start
 
